@@ -31,9 +31,9 @@
  *   node extract-components.mjs <projectRoot>
  *   node extract-components.mjs <projectRoot> --check [--stdin]
  *
- *   # pre-commit hook pattern (caller owns git; UA just answers ownership):
- *   git diff --cached --name-only -z --diff-filter=ACMR \
- *     | node extract-components.mjs <projectRoot> --check --stdin --unassigned-severity=error
+ * The caller owns any git wiring (e.g. a pre-commit hook pipes the staged file
+ * list into `--check --stdin`). See docs/declared-components.md for the schema,
+ * artifact shapes, and gating guidance.
  *
  * Options (check + pipeline share severity/coverage semantics):
  *   --coverage=all_scanned_files|declared_components_only   (default: all_scanned_files)

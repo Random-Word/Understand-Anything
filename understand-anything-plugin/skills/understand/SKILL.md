@@ -415,16 +415,17 @@ After the subagent completes, read `$PROJECT_ROOT/.understand-anything/intermedi
 
 ## Phase 3.5 — COMPONENTS (optional, only if `components.json` exists)
 
-Report to the user: `[Phase 3.5/7] Applying declared components...`
+First check whether `$PROJECT_ROOT/.understand-anything/components.json` exists.
 
-If `$PROJECT_ROOT/.understand-anything/components.json` exists, run the bundled script:
+- **If it does NOT exist**, skip this phase entirely — do not report a Phase 3.5 line. (Running
+  the script anyway is harmless; it self-skips with a one-line message. But prefer the explicit
+  existence check so no empty phase is announced.)
+- **If it exists**, report `[Phase 3.5/7] Applying declared components...` and run the bundled
+  script:
 
 ```bash
 node <SKILL_DIR>/extract-components.mjs $PROJECT_ROOT
 ```
-
-If the file does NOT exist, skip this phase silently (the script also self-skips with a
-one-line message, so running it unconditionally is safe).
 
 **What it is:** a project may declare its known/desired component structure (each component
 owns files via globs) in `.understand-anything/components.json`. This deterministic step maps
@@ -449,10 +450,10 @@ incremental-update path, re-run the same one-liner after the merged graph is sav
 
 Capture stderr: append any `Warning:` lines (emitted for error-severity drift) to `$PHASE_WARNINGS`.
 
-> **Fail-fast for coding agents (pre-commit):** the same script has a graph-free `--check` mode.
-> UA stays git-unaware — the hook pipes the staged file list in via `--stdin` and UA exits
-> non-zero on error-severity drift. Without `--stdin` UA enumerates the repo itself. See
-> `docs/declared-components.md`.
+> **Enforcing ownership outside the pipeline:** the same script has a graph-free `--check` mode
+> (millisecond, no graph) for gating in CI or a pre-commit hook — it takes a set of candidate
+> files and exits non-zero on error-severity drift. UA stays git-unaware; the caller supplies the
+> files (via `--stdin`, or UA enumerates the repo when omitted). See `docs/declared-components.md`.
 
 ---
 

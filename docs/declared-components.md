@@ -1,13 +1,39 @@
 # Declared Components
 
 Understand-Anything normally *discovers* structure from your code. **Declared components** let a
-project also *assert* its intended structure: which components exist and which files each one owns.
-The analysis then reports **drift** between what you declared and what is actually on disk — so
-structure can't silently rot, and AI coding agents get fast feedback when they add files that don't
-belong to any component.
+project also *assert* its intended structure — which components exist and which files each one owns —
+and then reports **drift**: the gap between what you declared and what is actually on disk.
 
-This is deterministic and **glob-only**: no LLM, no network. It is entirely opt-in — if you don't
-add a `components.json`, nothing changes.
+It is deterministic and **glob-only** (no LLM, no network) and entirely **opt-in**: if you don't add
+a `components.json`, nothing about `/understand` changes.
+
+## Why declare components?
+
+AI coding agents add files faster than anyone reads them. New code lands in plausible-looking places,
+but there is no closed loop confirming it landed where the *architecture intended*. Over months, the
+real structure quietly diverges from the mental model — the classic "what I think exists vs. what
+actually exists" problem.
+
+Declared components close that loop with a single, checkable invariant: **every source file belongs
+to exactly one named component.** From that one rule you get:
+
+- **No silent drift.** The moment a file is added that no component owns (or a component's directory
+  is deleted out from under it), the analysis says so.
+- **A stable map of intent.** `components.json` is a small, human-authored statement of the
+  architecture that lives in version control next to the code, independent of whatever the LLM
+  happens to discover this week.
+- **An anchor for everything else.** Once files are reliably grouped under stable component IDs, you
+  can hang other things off those IDs — ownership, specs, tests, review status. The reserved
+  `spec`/`tests` fields (below) are the first step in that direction. Even on its own, the ownership
+  check is useful; it is also the foundation for component-level spec validation.
+
+### How this relates to UA's "layers"
+
+`/understand` already groups nodes into **layers** — an *LLM-inferred* view of the architecture,
+recomputed on each run. Declared components are the complementary, *human-asserted* view: you state
+the grouping, and it is enforced by globs rather than inferred. Layers answer "what does the model
+think the shape is?"; components answer "does the code still match the shape I committed to?" The two
+do not conflict and can coexist — the component step never modifies layers.
 
 ## 1. Declare components
 
@@ -38,15 +64,15 @@ Create `.understand-anything/components.json` at your project root:
 | Field | Required | Notes |
 |-------|----------|-------|
 | `version` | yes | Must be `1`. |
-| `mode` | no | `"authoritative"` (hand-authored, default) or `"draft"` (imported by a tool). Provenance only. |
-| `coverage` | no | `"all_scanned_files"` (default — every file should be owned) or `"declared_components_only"` (unowned files are allowed). |
+| `mode` | no | `"authoritative"` (hand-authored, default) or `"draft"` (imported by a tool). Provenance label only; does not change behavior. |
+| `coverage` | no | `"all_scanned_files"` (default — every scanned file should be owned) or `"declared_components_only"` (unowned files are allowed, so no `unassigned_file` drift). If set here it **takes precedence over** the `--coverage` CLI flag. |
 | `components[]` | yes | Non-empty array. |
-| `components[].id` | yes | Unique, matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`. |
+| `components[].id` | yes | Unique, matches `^[A-Za-z0-9][A-Za-z0-9._-]*$`. This is the stable identifier other tooling can reference. |
 | `components[].name` | yes | Human-readable label. |
-| `components[].owner` | no | Free-form owner string. |
-| `components[].globs` | yes | Non-empty array of POSIX, project-root-relative globs. |
-| `components[].parent` | no | Reserved for future nesting — **accepted but inert in v1** (validated for referential integrity if present; ignored by the matcher). |
-| `components[].spec`, `components[].tests` | no | Reserved for future use; accepted and ignored in v1. |
+| `components[].owner` | no | Free-form owner string (team, person, etc.). |
+| `components[].globs` | yes | Non-empty array of POSIX, project-root-relative globs that define the files this component owns. |
+| `components[].parent` | no | Reserved for future nesting — **accepted but inert in v1** (validated for referential integrity if present, otherwise ignored). |
+| `components[].spec`, `components[].tests` | no | Reserved for future spec/test association — accepted and ignored in v1. |
 
 ### Glob syntax
 
@@ -59,78 +85,117 @@ Create `.understand-anything/components.json` at your project root:
 
 Character classes (`[...]`) are not supported in v1.
 
-## 2. Drift
+## 2. Run it and read the output
 
-When you run `/understand`, a `components-overlay.json` and a `components-drift.json` are written
-to `.understand-anything/`. Drift types:
+Run the normal command:
+
+```bash
+/understand
+```
+
+When `components.json` is present, the analysis adds a deterministic component step (no extra LLM
+cost) and writes two artifacts into `.understand-anything/`:
+
+**`components-overlay.json`** — the *result* of matching: each component's resolved file/node IDs and
+counts. This is what a dashboard or downstream tool reads to render components.
+
+```jsonc
+{
+  "version": 1,
+  "source": ".understand-anything/components.json",
+  "generatedAt": "2026-05-30T00:00:00.000Z",
+  "coverage": "all_scanned_files",
+  "components": [
+    { "id": "core-cli", "name": "Core CLI", "owner": "platform-team",
+      "parent": null, "nodeIds": ["file:src/cli/app.py", "file:src/main.py"], "fileCount": 2 },
+    { "id": "storage", "name": "Storage", "owner": null,
+      "parent": null, "nodeIds": ["file:src/storage/db.py"], "fileCount": 1 }
+  ],
+  "stats": {
+    "declaredComponents": 2, "matchedComponents": 2,
+    "matchedFiles": 3, "unassignedFiles": 1, "overlappingFiles": 0
+  }
+}
+```
+
+**`components-drift.json`** — the *findings*: where declared intent and reality disagree.
+
+```jsonc
+{
+  "version": 1,
+  "source": ".understand-anything/components.json",
+  "generatedAt": "2026-05-30T00:00:00.000Z",
+  "coverage": "all_scanned_files",
+  "summary": { "error": 0, "drift": 1 },
+  "findings": [
+    { "type": "unassigned_file", "severity": "drift",
+      "filePath": "src/util/new_helper.py", "category": "code",
+      "message": "File \"src/util/new_helper.py\" matches no component glob in components.json." }
+  ]
+}
+```
+
+To resolve a finding you either **update `components.json`** (the file legitimately belongs to a
+component — add or widen a glob) or **move/remove the file** (it shouldn't be there). That choice —
+adjust the declaration vs. fix the code — is the whole point.
+
+## 3. Drift types
 
 | Type | Meaning | Default severity |
 |------|---------|------------------|
 | `unassigned_file` | A scanned file matches no component glob. | `drift` (warning) |
-| `empty_component` | A declared component matches no files. | `drift` (warning) |
-| `overlapping_globs` | A file is owned by more than one component (assigned to none until you disambiguate). | `error` |
+| `empty_component` | A declared component matches no files (its globs are stale or wrong). | `drift` (warning) |
+| `overlapping_globs` | A file is owned by more than one component. It is assigned to **none** until you disambiguate, and the overlap is reported. | `error` |
 
-Only an **invalid** `components.json` (bad schema, duplicate ids, dangling `parent`, empty globs)
-is fatal. Drift never blocks the analysis itself.
+Severity values are `error`, `drift` (a non-blocking warning), or `off`. Drift never blocks the
+analysis itself — `/understand` always completes. Only an **invalid** `components.json` (bad schema,
+duplicate ids, dangling `parent`, empty globs) is fatal.
 
-## 3. Fail-fast git hook (optional)
+## 4. Enforcing ownership outside the pipeline (`--check`)
 
-The same script has a graph-free `--check` mode. Crucially, **UA does not know about git
-staging** — the caller decides which files matter and pipes the list in on stdin (`--stdin`).
-UA simply answers "which of these files does no component own?" and exits non-zero on
-error-severity drift. This keeps the git/index logic where it belongs (the hook) and keeps UA a
-pure ownership checker.
+The same script has a graph-free **`--check`** mode for *gating* rather than reporting: it runs in
+milliseconds, takes a set of candidate files, and exits non-zero when any finding is at `error`
+severity. This is what you wire into CI or a pre-commit hook so an unowned file fails fast instead of
+drifting in unnoticed.
 
-Wire it into a **pre-commit hook** so coding agents can't commit a file that no component owns:
+By design, **UA does not know about git here.** The caller supplies the file set; UA only answers
+"which of these does no component own?" Two ways to supply files:
 
-```sh
-#!/usr/bin/env bash
-# .git/hooks/pre-commit  (or via core.hooksPath / husky)
-set -euo pipefail   # pipefail is essential: see note below
-root="$(git rev-parse --show-toplevel)"
-# The hook owns the git logic: list exactly what's about to be committed and pipe it in.
-git diff --cached --name-only --diff-filter=ACMR -z \
-  | node "$root/path/to/skills/understand/extract-components.mjs" \
-      "$root" \
-      --check \
-      --stdin \
-      --coverage=all_scanned_files \
-      --unassigned-severity=error
+```bash
+# Caller pipes an explicit list (NUL- or newline-separated, project-relative paths) via --stdin.
+# This is how a git hook passes "exactly the files about to be committed":
+printf '%s\0' src/a.py src/b.py | node extract-components.mjs <projectRoot> --check --stdin
+
+# Or, with no --stdin, UA enumerates the repo itself (git ls-files, with a recursive-walk
+# fallback) so a standalone check sees the same files the analysis would:
+node extract-components.mjs <projectRoot> --check
 ```
 
-`--diff-filter=ACMR` skips deletions; `-z` is NUL-separated (safe for paths with spaces/newlines).
-The check reads `components.json` from the working tree, so stage your declaration edits before
-committing.
-
-> **Fail closed.** Because UA no longer runs git itself, it cannot distinguish "git failed" from
-> "nothing staged" — both arrive as an empty list and pass. The `set -o pipefail` above restores
-> that safety: if `git diff` fails (corrupt index, not a repo, …) the pipeline exits non-zero and
-> the commit is blocked. Do **not** drop `pipefail`, and prefer `bash` over plain `sh` (POSIX `sh`
-> can't portably provide it).
+Because UA no longer runs git itself, the *caller* owns the git/exit-status wiring (e.g. a pre-commit
+hook should fail closed if its own `git diff` fails). Wiring a hook is a project/tooling concern and
+is intentionally out of scope here; `--check` is the primitive it builds on.
 
 ### `--check` options
 
 ```
 node extract-components.mjs <projectRoot> --check [options]
 
-  --stdin                          read the candidate file list (NUL- or newline-separated,
-                                   project-relative paths) from stdin. This is the integration
-                                   point for a git hook. Without --stdin, UA enumerates the repo
-                                   itself (git ls-files, with a recursive-walk fallback) so a
-                                   standalone check matches the analysis file universe.
-  --coverage=all_scanned_files|declared_components_only
+  --stdin                          read the candidate file list from stdin (NUL- or newline-
+                                   separated, project-relative paths). Without it, UA enumerates
+                                   the repo itself.
+  --coverage=all_scanned_files|declared_components_only   (config value wins if set)
   --unassigned-severity=error|drift|off          severity for uncovered CODE files (default drift)
   --unassigned-noncode-severity=error|drift|off  severity for uncovered non-code files (default drift)
   --empty-severity=error|drift|off               (default drift)
   --overlap-severity=error|drift|off             (default error)
 ```
 
-**Category-aware enforcement.** Files are classified the same way the project scanner classifies
-them (code / config / docs / data / …). `--unassigned-severity` applies to **code** files;
-non-code files (READMEs, data fixtures, lockfiles, etc.) use `--unassigned-noncode-severity`
-(default `drift`). This means a strict gate can block on an uncovered *code* file without nagging
-about every incidental README or data file. To exclude files from consideration entirely, add them
-to `.understandignore`.
+**Category-aware severity.** Files are classified the same way the project scanner classifies them
+(code / config / docs / data / …). `--unassigned-severity` applies to **code** files, while non-code
+files (READMEs, data fixtures, lockfiles, etc.) use `--unassigned-noncode-severity`. So a strict gate
+can require every *code* file to be owned without nagging about an incidental README or data file. To
+drop files from consideration entirely, add them to `.understandignore` (the same ignore file the
+analysis already honors).
 
-**Exit codes:** `0` = pass · `1` = at least one error-severity finding (check mode) · `2` = invalid
+**Exit codes:** `0` = pass · `1` = at least one `error`-severity finding (check mode) · `2` = invalid
 declaration or I/O error.
