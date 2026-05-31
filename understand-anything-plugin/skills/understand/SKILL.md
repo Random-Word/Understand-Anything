@@ -413,6 +413,49 @@ After the subagent completes, read `$PROJECT_ROOT/.understand-anything/intermedi
 
 ---
 
+## Phase 3.5 — COMPONENTS (optional, only if `components.json` exists)
+
+Report to the user: `[Phase 3.5/7] Applying declared components...`
+
+If `$PROJECT_ROOT/.understand-anything/components.json` exists, run the bundled script:
+
+```bash
+node <SKILL_DIR>/extract-components.mjs $PROJECT_ROOT
+```
+
+If the file does NOT exist, skip this phase silently (the script also self-skips with a
+one-line message, so running it unconditionally is safe).
+
+**What it is:** a project may declare its known/desired component structure (each component
+owns files via globs) in `.understand-anything/components.json`. This deterministic step maps
+file nodes to those components and reports drift. It is glob-only — no LLM, no network.
+
+**Reads:**
+- `$PROJECT_ROOT/.understand-anything/components.json` (the declaration)
+- `$PROJECT_ROOT/.understand-anything/intermediate/assembled-graph.json` (file nodes; falls back
+  to `knowledge-graph.json` for standalone re-runs)
+
+**Writes (these survive Phase 7 cleanup — they live outside `intermediate/`):**
+- `$PROJECT_ROOT/.understand-anything/components-overlay.json` — component id → node IDs + stats
+- `$PROJECT_ROOT/.understand-anything/components-drift.json` — ownership drift findings
+
+**Drift types:** `unassigned_file` (a scanned file no component owns), `empty_component` (a
+declared component that owns nothing), `overlapping_globs` (a file owned by more than one
+component — assigned to none until disambiguated). Drift does NOT block analysis; only an
+invalid `components.json` (bad schema, duplicate ids, dangling `parent`, empty globs) is fatal.
+
+**Idempotency:** the step fully rewrites both artifacts from the current graph each run. On the
+incremental-update path, re-run the same one-liner after the merged graph is saved.
+
+Capture stderr: append any `Warning:` lines (emitted for error-severity drift) to `$PHASE_WARNINGS`.
+
+> **Fail-fast for coding agents (pre-commit):** the same script has a graph-free `--check` mode.
+> UA stays git-unaware — the hook pipes the staged file list in via `--stdin` and UA exits
+> non-zero on error-severity drift. Without `--stdin` UA enumerates the repo itself. See
+> `docs/declared-components.md`.
+
+---
+
 ## Phase 4 — ARCHITECTURE
 
 Report to the user: `[Phase 4/7] Identifying architectural layers...`
