@@ -549,7 +549,7 @@ function enumerateViaWalk(projectRoot) {
  * repo. Returns an array of project-relative POSIX paths in unspecified
  * order — caller is responsible for sorting + filtering.
  */
-function enumerateFiles(projectRoot) {
+export function enumerateFiles(projectRoot) {
   const fromGit = enumerateViaGit(projectRoot);
   if (fromGit !== null) return fromGit;
   process.stderr.write(
@@ -799,4 +799,5 @@ export default {
   detectLanguage,
   detectCategory,
   estimateComplexity,
+  enumerateFiles,
 };
