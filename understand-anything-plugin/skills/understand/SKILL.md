@@ -413,7 +413,72 @@ After the subagent completes, read `$PROJECT_ROOT/.understand-anything/intermedi
 
 ---
 
+## Phase 3.5 — COMPONENTS (optional, only if `components.json` exists)
+
+First check whether `$PROJECT_ROOT/.understand-anything/components.json` exists.
+
+- **If it does NOT exist**, skip this phase entirely — do not report a Phase 3.5 line. (Running
+  the script anyway is harmless; it self-skips with a one-line message. But prefer the explicit
+  existence check so no empty phase is announced.)
+- **If it exists**, report `[Phase 3.5/7] Injecting declared components...` and run the bundled
+  script:
+
+```bash
+node <SKILL_DIR>/extract-components.mjs $PROJECT_ROOT
+```
+
+**What it is:** a project may declare its known/desired component structure in
+`.understand-anything/components.json` — each component owns files via globs and may name a
+`spec_path`. This deterministic step turns each declared component into a **durable graph
+primitive** so the structure survives re-analysis and can be specified/tested. It is glob-only —
+no LLM, no network.
+
+**Injects (in place, into the assembled graph):**
+- one `module:<id>` node per component, tagged `ua:declared-component` (display name = the
+  component name; no layer — `module` is not a file-level type)
+- a `contains` edge from each component module to every member file-bearing node it owns, and a
+  `contains` edge `module:<parent>` → `module:<child>` for nesting
+- when `spec_path` resolves to an already-scanned `document` node: a `specifies` edge is seeded
+  from the spec document to each member node (the `normative-spec` document tag is owned by the
+  merge step, not seeded here)
+
+**Idempotent (scrub-then-rebuild):** every run first removes all prior
+`ua:declared-component` module nodes (and their incident edges) and all provenance-marked seeded
+`specifies` edges, then re-injects from the current declaration — so adding/removing/renaming a
+component converges and never leaves stale nodes.
+
+**Reads:**
+- `$PROJECT_ROOT/.understand-anything/components.json` (the declaration)
+- `$PROJECT_ROOT/.understand-anything/intermediate/assembled-graph.json` (the graph; falls back
+  to `knowledge-graph.json` for standalone re-runs)
+
+**Writes:**
+- the assembled graph, mutated in place (the injected nodes/edges then flow through Phase 6
+  validation and Phase 7 save like any other graph data)
+- `$PROJECT_ROOT/.understand-anything/components-drift.json` — ownership + spec-link drift findings
+
+**Drift types:** `unassigned_file` (a scanned file no component owns), `empty_component` (a
+declared component that owns nothing), `overlapping_globs` (a file owned by more than one
+component — assigned to none until disambiguated), `spec_not_found` (a `spec_path` with no
+scanned `document` node — the spec link is skipped, never synthesized). Drift does NOT block
+analysis; only an invalid `components.json` (bad schema, duplicate ids, dangling `parent`, empty
+globs, non-string `spec_path`) is fatal.
+
+Capture stderr: append any `Warning:` lines (emitted for error-severity drift) to `$PHASE_WARNINGS`.
+
+> **Incremental / review-only runs:** this phase sits on the full-analysis path. After an
+> incremental update saves the merged graph, re-run the same one-liner — the script falls back to
+> `knowledge-graph.json` and re-injects idempotently.
+>
+> **Enforcing ownership outside the pipeline:** the same script has a graph-free `--check` mode
+> (millisecond, no graph) for gating in CI or a pre-commit hook — it takes a set of candidate
+> files and exits non-zero on error-severity drift. UA stays git-unaware; the caller supplies the
+> files (via `--stdin`, or UA enumerates the repo when omitted).
+
+---
+
 ## Phase 4 — ARCHITECTURE
+
 
 Report to the user: `[Phase 4/7] Identifying architectural layers...`
 
