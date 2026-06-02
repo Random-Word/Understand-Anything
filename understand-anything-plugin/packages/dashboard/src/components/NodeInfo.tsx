@@ -2,6 +2,10 @@ import { useState } from "react";
 import { useDashboardStore } from "../store";
 import { useI18n } from "../contexts/I18nContext";
 import type { NodeType, EdgeType, KnowledgeGraph, GraphNode } from "@understand-anything/core/types";
+import {
+  computeComponentCoverage,
+  isDeclaredComponent,
+} from "../utils/componentCoverage";
 
 // Badge color classes keyed by NodeType — must be kept in sync with core NodeType union.
 const typeBadgeColors: Record<NodeType, string> = {
@@ -130,6 +134,144 @@ function KnowledgeNodeDetails({ node, graph }: { node: GraphNode; graph: Knowled
             )}
           </div>
         </div>
+      )}
+    </div>
+  );
+}
+
+function ComponentCoverageDetails({ node, graph }: { node: GraphNode; graph: KnowledgeGraph }) {
+  const navigateToNode = useDashboardStore((s) => s.navigateToNode);
+  const { t } = useI18n();
+  const cov = computeComponentCoverage(graph, node);
+
+  const pct = (n: number) =>
+    cov.memberCount === 0 ? 0 : Math.round((n / cov.memberCount) * 100);
+
+  return (
+    <div className="mb-4">
+      <h3 className="text-[11px] font-semibold text-gold uppercase tracking-wider mb-2">
+        {t.nodeInfo.componentCoverage}
+      </h3>
+
+      {cov.memberCount === 0 ? (
+        <p className="text-[11px] text-text-muted bg-elevated rounded-lg px-3 py-2 border border-border-subtle">
+          {t.nodeInfo.noComponentMembers}
+        </p>
+      ) : (
+        <>
+          {/* Spec + test coverage bars */}
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <div className="bg-elevated rounded-lg px-3 py-2 border border-border-subtle">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[10px] uppercase tracking-wider text-text-muted">
+                  {t.nodeInfo.componentSpecs}
+                </span>
+                <span className="text-xs text-text-primary font-semibold">
+                  {cov.specifiedCount}/{cov.memberCount}
+                </span>
+              </div>
+              <div className="mt-1 h-1.5 rounded-full bg-border-subtle overflow-hidden">
+                <div className="h-full bg-gold" style={{ width: `${pct(cov.specifiedCount)}%` }} />
+              </div>
+            </div>
+            <div className="bg-elevated rounded-lg px-3 py-2 border border-border-subtle">
+              <div className="flex items-baseline justify-between">
+                <span className="text-[10px] uppercase tracking-wider text-text-muted">
+                  {t.nodeInfo.componentTests}
+                </span>
+                <span className="text-xs text-text-primary font-semibold">
+                  {cov.graphHasTestedByEdges ? `${cov.testedCount}/${cov.memberCount}` : "\u2014"}
+                </span>
+              </div>
+              <div className="mt-1 h-1.5 rounded-full bg-border-subtle overflow-hidden">
+                <div
+                  className="h-full bg-node-function"
+                  style={{ width: `${cov.graphHasTestedByEdges ? pct(cov.testedCount) : 0}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          {!cov.graphHasTestedByEdges && (
+            <p className="text-[10px] text-text-muted mb-2 pl-0.5">
+              {t.nodeInfo.noTestRelationships}
+            </p>
+          )}
+
+          {/* Spec documents governing this component */}
+          {cov.specDocs.length > 0 && (
+            <div className="mb-2">
+              <h4 className="text-[10px] uppercase tracking-wider text-text-muted mb-1">
+                {t.nodeInfo.specDocuments}
+              </h4>
+              <div className="space-y-1">
+                {cov.specDocs.map((doc) => (
+                  <div
+                    key={doc.id}
+                    className="text-xs bg-elevated rounded-lg px-3 py-1.5 border border-border-subtle cursor-pointer hover:border-gold/40 hover:bg-gold/5 transition-colors truncate"
+                    onClick={() => navigateToNode(doc.id)}
+                    title={doc.name}
+                  >
+                    <span className="text-text-primary">{doc.name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
+          {/* Members with per-file spec/test badges */}
+          <h4 className="text-[10px] uppercase tracking-wider text-text-muted mb-1">
+            {t.nodeInfo.componentMembers} ({cov.memberCount})
+          </h4>
+          <div className="space-y-1">
+            {cov.members.map((m) => (
+              <div
+                key={m.id}
+                className="text-xs bg-elevated rounded-lg px-3 py-1.5 border border-border-subtle flex items-center gap-2 cursor-pointer hover:border-gold/40 hover:bg-gold/5 transition-colors"
+                onClick={() => navigateToNode(m.id)}
+              >
+                <span className="text-text-primary truncate flex-1">{m.name}</span>
+                <span
+                  className={`text-[9px] font-semibold uppercase px-1 py-0.5 rounded ${
+                    m.specified ? "text-gold bg-gold/10" : "text-text-muted bg-border-subtle/40"
+                  }`}
+                  title={t.nodeInfo.componentSpecs}
+                >
+                  S
+                </span>
+                <span
+                  className={`text-[9px] font-semibold uppercase px-1 py-0.5 rounded ${
+                    m.tested ? "text-node-function bg-node-function/10" : "text-text-muted bg-border-subtle/40"
+                  }`}
+                  title={t.nodeInfo.componentTests}
+                >
+                  T
+                </span>
+              </div>
+            ))}
+          </div>
+
+          {/* Nested declared components */}
+          {cov.childModules.length > 0 && (
+            <div className="mt-2">
+              <h4 className="text-[10px] uppercase tracking-wider text-text-muted mb-1">
+                {t.nodeInfo.nestedComponents}
+              </h4>
+              <div className="space-y-1">
+                {cov.childModules.map((c) => (
+                  <div
+                    key={c.id}
+                    className="text-xs bg-elevated rounded-lg px-3 py-1.5 border border-border-subtle cursor-pointer hover:border-gold/40 hover:bg-gold/5 transition-colors truncate"
+                    onClick={() => navigateToNode(c.id)}
+                    title={c.name}
+                  >
+                    <span className="text-text-primary">{c.name}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+        </>
       )}
     </div>
   );
@@ -463,8 +605,13 @@ export default function NodeInfo() {
         <DomainNodeDetails node={node} graph={activeGraph} />
       )}
 
+      {/* Declared-component coverage (specs + tests rolled up over members) */}
+      {activeGraph && node && isDeclaredComponent(node) && (
+        <ComponentCoverageDetails node={node} graph={activeGraph} />
+      )}
+
       {/* Child classes/functions within this file */}
-      {childNodes.length > 0 && (
+      {!isDeclaredComponent(node) && childNodes.length > 0 && (
         <div className="mb-4">
           <h3 className="text-[11px] font-semibold text-gold uppercase tracking-wider mb-2">
             {t.nodeInfo.definedInThisFile} ({childNodes.length})
